@@ -165,11 +165,11 @@ module Koudoku::Subscription
   def subscription_owner_description
     # assuming owner responds to name.
     # we should check for whether it responds to this or not.
-    "#{subscription_owner.id}"
+    "#{subscription_owner.id} - #{subscription_owner.try(:email).to_s} - #{subscription_owner.try(:name).to_s} - #{subscription_owner.try(:phone).to_s}"
   end
 
   def subscription_owner_email
-    nil
+    "#{subscription_owner.try(:email).to_s}"
   end
 
   def changing_plans?
