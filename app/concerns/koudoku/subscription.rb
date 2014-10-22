@@ -47,8 +47,8 @@ module Koudoku::Subscription
             # Remove the current pricing.
             self.current_price = nil
 
-            # delete the subscription.
-            customer.cancel_subscription
+            # delete the subscription. - at_period_end if prorate == false
+            customer.cancel_subscription({:at_period_end => (!Koudoku.prorate).to_s })
 
             finalize_cancelation!
 
