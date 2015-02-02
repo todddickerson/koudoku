@@ -48,7 +48,12 @@ module Koudoku::Subscription
             self.current_price = nil
 
             # delete the subscription. - at_period_end if prorate == false
-            customer.cancel_subscription({:at_period_end => (!Koudoku.prorate).to_s })
+            begin
+              customer.cancel_subscription({:at_period_end => (!Koudoku.prorate).to_s })
+            rescue => e
+              logger.info "Error Canceling Stripe Subscription: #{e.to_s}"
+              # assume already canceled by support
+            end
 
             finalize_cancelation!
 
