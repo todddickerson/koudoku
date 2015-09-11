@@ -33,8 +33,14 @@ module Koudoku::Subscription
             prepare_for_downgrade if downgrading?
             prepare_for_upgrade if upgrading?
 
-            # update the package level with stripe.
-            customer.update_subscription(:plan => self.plan.stripe_id)
+            sub = customer.subscriptions.first
+            if sub && sub.trial_end && sub.trial_end > Time.now.to_i
+              # update package level and adjust trial end to match current subscription trial_end
+              customer.update_subscription(:plan => self.plan.stripe_id, trial_end: sub.trial_end) if Koudoku.keep_trial_end
+            else
+              # update the package level with stripe.
+              customer.update_subscription(:plan => self.plan.stripe_id)
+            end
 
             finalize_downgrade! if downgrading?
             finalize_upgrade! if upgrading?

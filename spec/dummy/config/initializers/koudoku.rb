@@ -4,4 +4,5 @@ Koudoku.setup do |config|
   config.stripe_publishable_key = 'not_stripe_publishable_key'
   config.stripe_secret_key = 'not_stripe_secret_key'
   config.free_trial_length = 30
+  config.keep_trial_end = true
 end
