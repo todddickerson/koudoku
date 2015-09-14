@@ -22,6 +22,9 @@ module Koudoku
   mattr_accessor :prorate
   @@prorate = true
 
+  mattr_accessor :keep_trial_end
+  @@keep_trial_end = true
+
   def self.setup
     yield self
     
