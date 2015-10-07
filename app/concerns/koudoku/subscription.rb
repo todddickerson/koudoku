@@ -39,7 +39,7 @@ module Koudoku::Subscription
               # update package level and adjust trial end to match current subscription trial_end + add starting plan trial
               stripe_plan = Stripe::Plan.retrieve(self.plan.stripe_id)
               if stripe_plan.trial_period_days
-                trial_end = trial_end + stripe_plan.trial_period_days
+                trial_end = trial_end + stripe_plan.trial_period_days.to_i.days
               end
               customer.update_subscription(:plan => self.plan.stripe_id, trial_end: trial_end) if Koudoku.keep_trial_end
             else
