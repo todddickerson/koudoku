@@ -33,6 +33,9 @@ module Koudoku::Subscription
             prepare_for_downgrade if downgrading?
             prepare_for_upgrade if upgrading?
 
+            # updating a default credit card
+            update_default_stripe_card
+
             sub = customer.subscriptions.first
             if sub && sub.trial_end && sub.trial_end > Time.now.to_i
               trial_end = sub.trial_end
@@ -130,18 +133,7 @@ module Koudoku::Subscription
         
       # if they're updating their credit card details.
       elsif self.credit_card_token.present?
-        
-        prepare_for_card_update
-        
-        # fetch the customer.
-        customer = Stripe::Customer.retrieve(self.stripe_id)
-        customer.card = self.credit_card_token
-        customer.save
-
-        # update the last four based on this new card.
-        self.last_four = customer.cards.retrieve(customer.default_card).last4
-        finalize_card_update!
-
+        update_default_stripe_card
       end
 
     end
@@ -169,6 +161,30 @@ module Koudoku::Subscription
         "Downgrade"
       end
     end
+  end
+
+  #
+  # Updates the default credit card
+  #
+  def update_default_stripe_card
+    return false unless credit_card_token.present?
+
+    prepare_for_card_update
+
+    # fetch the customer.
+    customer = Stripe::Customer.retrieve(self.stripe_id)
+    source = customer.sources.create(source: credit_card_token)
+    customer.default_source = source.id
+    customer.save
+
+    # update the last four based on this new card.
+    self.last_four = customer.cards.retrieve(customer.default_card).last4
+
+    finalize_card_update!
+  rescue Stripe::CardError => card_error
+    errors[:base] << card_error.message
+    card_was_declined
+    return false
   end
 
   # Pretty sure this wouldn't conflict with anything someone would put in their model
