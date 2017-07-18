@@ -6,7 +6,8 @@ module Koudoku::Subscription
     # We don't store these one-time use tokens, but this is what Stripe provides
     # client-side after storing the credit card information.
     attr_accessor :credit_card_token
-    
+    attr_accessor :skip_prorate_plan_changes
+
     belongs_to :plan
 
     # update details.
@@ -47,7 +48,9 @@ module Koudoku::Subscription
               customer.update_subscription(:plan => self.plan.stripe_id, trial_end: trial_end) if Koudoku.keep_trial_end
             else
               # update the package level with stripe.
-              customer.update_subscription(:plan => self.plan.stripe_id)
+              opts = {plan: self.plan.stripe_id}
+              opts[:prorate] = false if skip_prorate_plan_changes
+              customer.update_subscription(opts)
             end
 
             finalize_downgrade! if downgrading?
