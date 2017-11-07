@@ -72,9 +72,9 @@ module Koudoku::Subscription
             # delete the subscription. - at_period_end if prorate == false
             begin
               customer.cancel_subscription({:at_period_end => (!Koudoku.prorate).to_s })
-            rescue Exception => e
-              errors[:base] << e.message
-              return false
+            rescue => e
+              logger.info "Error Canceling Stripe Subscription: #{e.to_s}"
+              # assume already canceled by support
             end
 
             finalize_cancelation!
