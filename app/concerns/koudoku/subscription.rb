@@ -28,35 +28,39 @@ module Koudoku::Subscription
 
           # if a new plan has been selected
           if self.plan.present?
+            begin
+              # Record the new plan pricing.
+              self.current_price = self.plan.price
 
-            # Record the new plan pricing.
-            self.current_price = self.plan.price
+              prepare_for_downgrade if downgrading?
+              prepare_for_upgrade if upgrading?
 
-            prepare_for_downgrade if downgrading?
-            prepare_for_upgrade if upgrading?
+              # updating a default credit card
+              update_default_stripe_card
 
-            # updating a default credit card
-            update_default_stripe_card
-
-            sub = customer.subscriptions.first
-            if sub && sub.trial_end && sub.trial_end > Time.now.to_i
-              trial_end = sub.trial_end
-              # update package level and adjust trial end to match current subscription trial_end + add starting plan trial
-              stripe_plan = Stripe::Plan.retrieve(self.plan.stripe_id)
-              if stripe_plan.trial_period_days
-                trial_end = trial_end + stripe_plan.trial_period_days.to_i.days
+              sub = customer.subscriptions.first
+              if sub && sub.trial_end && sub.trial_end > Time.now.to_i
+                trial_end = sub.trial_end
+                # update package level and adjust trial end to match current subscription trial_end + add starting plan trial
+                stripe_plan = Stripe::Plan.retrieve(self.plan.stripe_id)
+                if stripe_plan.trial_period_days
+                  trial_end = trial_end + stripe_plan.trial_period_days.to_i.days
+                end
+                customer.update_subscription(:plan => self.plan.stripe_id, trial_end: trial_end) if Koudoku.keep_trial_end
+              else
+                # update the package level with stripe.
+                opts = {plan: self.plan.stripe_id}
+                opts[:prorate] = false if skip_prorate_plan_changes
+                customer.update_subscription(opts)
               end
-              customer.update_subscription(:plan => self.plan.stripe_id, trial_end: trial_end) if Koudoku.keep_trial_end
-            else
-              # update the package level with stripe.
-              opts = {plan: self.plan.stripe_id}
-              opts[:prorate] = false if skip_prorate_plan_changes
-              customer.update_subscription(opts)
+
+              finalize_downgrade! if downgrading?
+              finalize_upgrade! if upgrading?
+            rescue Stripe::CardError => card_error
+              errors[:base] << card_error.message
+              card_was_declined
+              return false
             end
-
-            finalize_downgrade! if downgrading?
-            finalize_upgrade! if upgrading?
-
           # if no plan has been selected.
           else
 
@@ -68,9 +72,9 @@ module Koudoku::Subscription
             # delete the subscription. - at_period_end if prorate == false
             begin
               customer.cancel_subscription({:at_period_end => (!Koudoku.prorate).to_s })
-            rescue => e
-              logger.info "Error Canceling Stripe Subscription: #{e.to_s}"
-              # assume already canceled by support
+            rescue Exception => e
+              errors[:base] << e.message
+              return false
             end
 
             finalize_cancelation!
