@@ -16,7 +16,7 @@ module Koudoku::Subscription
 
     def processing!
       # if their package level has changed ..
-      if changing_plans? 
+      if changing_plans?
 
         prepare_for_plan_change
 
@@ -146,7 +146,7 @@ module Koudoku::Subscription
         end
 
         finalize_plan_change!
-        
+
       # if they're updating their credit card details.
       elsif self.credit_card_token.present?
         update_default_stripe_card
@@ -166,7 +166,7 @@ module Koudoku::Subscription
       else
         if Koudoku.free_trial?
           "Start Trial"
-        else 
+        else
           "Upgrade"
         end
       end
@@ -221,15 +221,15 @@ module Koudoku::Subscription
   end
 
   def changing_plans?
-    plan_id_changed?
+    will_save_change_to_plan_id?
   end
 
   def downgrading?
-    plan.present? and plan_id_was.present? and plan_id_was > self.plan_id
+    plan.present? and plan_id_before_last_save.present? and plan_id_before_last_save > self.plan_id
   end
 
   def upgrading?
-    (plan_id_was.present? and plan_id_was < plan_id) or plan_id_was.nil?
+    (plan_id_before_last_save.present? and plan_id_before_last_save < plan_id) or plan_id_before_last_save.nil?
   end
 
   # Template methods.
@@ -247,7 +247,7 @@ module Koudoku::Subscription
 
   def prepare_for_cancelation
   end
-  
+
   def prepare_for_card_update
   end
 
@@ -271,14 +271,14 @@ module Koudoku::Subscription
 
   def card_was_declined
   end
-  
+
   # stripe web-hook callbacks.
   def payment_succeeded(amount)
   end
-  
+
   def charge_failed
   end
-  
+
   def charge_disputed
   end
 
