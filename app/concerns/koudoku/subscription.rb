@@ -46,11 +46,14 @@ module Koudoku::Subscription
                 if stripe_plan.trial_period_days
                   trial_end = trial_end + stripe_plan.trial_period_days.to_i.days
                 end
-                customer.update_subscription(:plan => self.plan.stripe_id, trial_end: trial_end) if Koudoku.keep_trial_end
+                opts = { plan: self.plan.stripe_id, trial_end: trial_end }
+                opts = subscription_options(opts)
+                customer.update_subscription(opts) if Koudoku.keep_trial_end
               else
                 # update the package level with stripe.
                 opts = {plan: self.plan.stripe_id}
                 opts[:prorate] = false if skip_prorate_plan_changes
+                opts = subscription_options(opts)
                 customer.update_subscription(opts)
               end
 
@@ -230,6 +233,11 @@ module Koudoku::Subscription
 
   def upgrading?
     (plan_id_before_last_save.present? and plan_id_before_last_save < plan_id) or plan_id_before_last_save.nil?
+  end
+
+  # CF Template methods.
+  def subscription_options(opts = {})
+    opts
   end
 
   # Template methods.
