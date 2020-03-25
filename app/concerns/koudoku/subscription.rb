@@ -194,6 +194,10 @@ module Koudoku::Subscription
     customer = Stripe::Customer.retrieve(self.stripe_id)
     source = customer.sources.create(source: credit_card_token)
     customer.default_source = source.id
+    # Undo payment_method set by the payment_methods API as this will override the default_source
+    if !customer.invoice_settings.default_payment_method.nil?
+      customer.invoice_settings.default_payment_method = nil
+    end
     customer.save
 
     # update the last four based on this new card.
