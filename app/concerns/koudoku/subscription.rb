@@ -7,6 +7,7 @@ module Koudoku::Subscription
     # client-side after storing the credit card information.
     attr_accessor :credit_card_token
     attr_accessor :skip_prorate_plan_changes
+    attr_accessor :invoice_immediately
 
     belongs_to :plan
 
@@ -53,6 +54,7 @@ module Koudoku::Subscription
                 # update the package level with stripe.
                 opts = {plan: self.plan.stripe_id}
                 opts[:prorate] = false if skip_prorate_plan_changes
+                opts[:billing_cycle_anchor] = "now" if invoice_immediately
                 opts = subscription_options(opts)
                 customer.update_subscription(opts)
               end
