@@ -2,7 +2,6 @@ module Koudoku::Subscription
   extend ActiveSupport::Concern
 
   included do
-
     # We don't store these one-time use tokens, but this is what Stripe provides
     # client-side after storing the credit card information.
     attr_accessor :credit_card_token
