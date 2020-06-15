@@ -6,15 +6,17 @@ module Koudoku::Subscription
     # We don't store these one-time use tokens, but this is what Stripe provides
     # client-side after storing the credit card information.
     attr_accessor :credit_card_token
-    
+    attr_accessor :skip_prorate_plan_changes
+
     belongs_to :plan
 
-    # update details.
-    before_save :processing!
-    def processing!
+    # update details. Note: to prevent recursive callbacks on the processing method, this callback
+    # can be skipped by setting @skip_proccessing_callback
+    before_save :processing!, unless: lambda { @skip_proccessing_callback == true }
 
+    def processing!
       # if their package level has changed ..
-      if changing_plans? 
+      if changing_plans?
 
         prepare_for_plan_change
 
@@ -26,30 +28,43 @@ module Koudoku::Subscription
 
           # if a new plan has been selected
           if self.plan.present?
+            begin
+              # Record the new plan pricing.
+              self.current_price = self.plan.price
 
-            # Record the new plan pricing.
-            self.current_price = self.plan.price
+              prepare_for_downgrade if downgrading?
+              prepare_for_upgrade if upgrading?
 
-            prepare_for_downgrade if downgrading?
-            prepare_for_upgrade if upgrading?
+              # updating a default credit card
+              update_default_stripe_card
 
-            sub = customer.subscriptions.first
-            if sub && sub.trial_end && sub.trial_end > Time.now.to_i
-              trial_end = sub.trial_end
-              # update package level and adjust trial end to match current subscription trial_end + add starting plan trial
-              stripe_plan = Stripe::Plan.retrieve(self.plan.stripe_id)
-              if stripe_plan.trial_period_days
-                trial_end = trial_end + stripe_plan.trial_period_days.to_i.days
+              sub = customer.subscriptions.first
+              if sub && sub.trial_end && sub.trial_end > Time.now.to_i
+                trial_end = sub.trial_end
+                # update package level and adjust trial end to match current subscription trial_end + add starting plan trial
+                stripe_plan = Stripe::Plan.retrieve(self.plan.stripe_id)
+                if stripe_plan.trial_period_days
+                  trial_end = trial_end + stripe_plan.trial_period_days.to_i.days
+                end
+                opts = { plan: self.plan.stripe_id, trial_end: trial_end }
+                opts = subscription_options(opts)
+                customer.update_subscription(opts) if Koudoku.keep_trial_end
+              else
+                # update the package level with stripe.
+                opts = {plan: self.plan.stripe_id}
+                opts[:prorate] = false if skip_prorate_plan_changes
+                opts[:billing_cycle_anchor] = "now" if invoice_immediately
+                opts = subscription_options(opts)
+                customer.update_subscription(opts)
               end
-              customer.update_subscription(:plan => self.plan.stripe_id, trial_end: trial_end) if Koudoku.keep_trial_end
-            else
-              # update the package level with stripe.
-              customer.update_subscription(:plan => self.plan.stripe_id)
+
+              finalize_downgrade! if downgrading?
+              finalize_upgrade! if upgrading?
+            rescue Stripe::CardError => card_error
+              errors[:base] << card_error.message
+              card_was_declined
+              throw :abort
             end
-
-            finalize_downgrade! if downgrading?
-            finalize_upgrade! if upgrading?
-
           # if no plan has been selected.
           else
 
@@ -86,8 +101,7 @@ module Koudoku::Subscription
               customer_attributes = {
                 description: subscription_owner_description,
                 email: subscription_owner_email,
-                card: credit_card_token, # obtained with Stripe.js
-                plan: plan.stripe_id
+                card: credit_card_token # obtained with Stripe.js
               }
 
               # If the class we're being included in supports coupons ..
@@ -97,18 +111,27 @@ module Koudoku::Subscription
                 end
               end
 
-              # create a customer at that package level.
+              # create a customer without the plan to start
               customer = Stripe::Customer.create(customer_attributes)
-              
+
+              # Store the stripe customer id in our db.
+              # We do not want this save to trigger the 'processing' method again so force that
+              # callback to skip
+              @skip_proccessing_callback = true
+              self.update_attributes( {
+                stripe_id: customer.id,
+                last_four: customer.cards.retrieve(customer.default_card).last4
+              } )
+              @skip_proccessing_callback = false
+
+              # now that we have recorded the stripe_id in our system we can setup the subscription in stripe
+              customer.plan = plan.stripe_id
+              customer.save
             rescue Stripe::CardError => card_error
               errors[:base] << card_error.message
               card_was_declined
-              return false
+              throw :abort
             end
-
-            # store the customer id.
-            self.stripe_id = customer.id
-            self.last_four = customer.cards.retrieve(customer.default_card).last4
 
             finalize_new_subscription!
             finalize_upgrade!
@@ -127,21 +150,10 @@ module Koudoku::Subscription
         end
 
         finalize_plan_change!
-        
+
       # if they're updating their credit card details.
       elsif self.credit_card_token.present?
-        
-        prepare_for_card_update
-        
-        # fetch the customer.
-        customer = Stripe::Customer.retrieve(self.stripe_id)
-        customer.card = self.credit_card_token
-        customer.save
-
-        # update the last four based on this new card.
-        self.last_four = customer.cards.retrieve(customer.default_card).last4
-        finalize_card_update!
-
+        update_default_stripe_card
       end
 
     end
@@ -158,7 +170,7 @@ module Koudoku::Subscription
       else
         if Koudoku.free_trial?
           "Start Trial"
-        else 
+        else
           "Upgrade"
         end
       end
@@ -169,6 +181,34 @@ module Koudoku::Subscription
         "Downgrade"
       end
     end
+  end
+
+  #
+  # Updates the default credit card
+  #
+  def update_default_stripe_card
+    return false unless credit_card_token.present?
+
+    prepare_for_card_update
+
+    # fetch the customer.
+    customer = Stripe::Customer.retrieve(self.stripe_id)
+    source = customer.sources.create(source: credit_card_token)
+    customer.default_source = source.id
+    # Undo payment_method set by the payment_methods API as this will override the default_source
+    if !customer.invoice_settings.default_payment_method.nil?
+      customer.invoice_settings.default_payment_method = nil
+    end
+    customer.save
+
+    # update the last four based on this new card.
+    self.last_four = customer.cards.retrieve(customer.default_card).last4
+
+    finalize_card_update!
+  rescue Stripe::CardError => card_error
+    errors[:base] << card_error.message
+    card_was_declined
+    return false
   end
 
   # Pretty sure this wouldn't conflict with anything someone would put in their model
@@ -189,15 +229,20 @@ module Koudoku::Subscription
   end
 
   def changing_plans?
-    plan_id_changed?
+    will_save_change_to_plan_id?
   end
 
   def downgrading?
-    plan.present? and plan_id_was.present? and plan_id_was > self.plan_id
+    plan.present? and plan_id_before_last_save.present? and plan_id_before_last_save > self.plan_id
   end
 
   def upgrading?
-    (plan_id_was.present? and plan_id_was < plan_id) or plan_id_was.nil?
+    (plan_id_before_last_save.present? and plan_id_before_last_save < plan_id) or plan_id_before_last_save.nil?
+  end
+
+  # CF Template methods.
+  def subscription_options(opts = {})
+    opts
   end
 
   # Template methods.
@@ -215,7 +260,7 @@ module Koudoku::Subscription
 
   def prepare_for_cancelation
   end
-  
+
   def prepare_for_card_update
   end
 
@@ -239,14 +284,14 @@ module Koudoku::Subscription
 
   def card_was_declined
   end
-  
+
   # stripe web-hook callbacks.
   def payment_succeeded(amount)
   end
-  
+
   def charge_failed
   end
-  
+
   def charge_disputed
   end
 
