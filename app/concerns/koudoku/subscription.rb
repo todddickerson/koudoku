@@ -55,6 +55,7 @@ module Koudoku::Subscription
                 opts = {plan: self.plan.stripe_id}
                 opts[:prorate] = false if skip_prorate_plan_changes
                 opts[:billing_cycle_anchor] = "now" if invoice_immediately
+
                 opts = subscription_options(opts)
                 customer.update_subscription(opts)
               end
