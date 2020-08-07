@@ -126,6 +126,7 @@ module Koudoku::Subscription
               @skip_proccessing_callback = false
 
               # now that we have recorded the stripe_id in our system we can setup the subscription in stripe
+              customer.metadata = subscription_options({})[:metadata]
               customer.plan = plan.stripe_id
               customer.save
             rescue Stripe::CardError => card_error
