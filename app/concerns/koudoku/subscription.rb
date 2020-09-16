@@ -7,6 +7,7 @@ module Koudoku::Subscription
     attr_accessor :credit_card_token
     attr_accessor :skip_prorate_plan_changes
     attr_accessor :invoice_immediately
+    attr_accessor :force_trial_end
 
     belongs_to :plan
 
@@ -47,6 +48,8 @@ module Koudoku::Subscription
                   trial_end = trial_end + stripe_plan.trial_period_days.to_i.days
                 end
                 opts = { plan: self.plan.stripe_id, trial_end: trial_end }
+                opts[:trial_end] = "now" if force_trial_end
+
                 opts = subscription_options(opts)
                 customer.update_subscription(opts) if Koudoku.keep_trial_end
               else
@@ -54,6 +57,7 @@ module Koudoku::Subscription
                 opts = {plan: self.plan.stripe_id}
                 opts[:prorate] = false if skip_prorate_plan_changes
                 opts[:billing_cycle_anchor] = "now" if invoice_immediately
+                opts[:trial_end] = "now" if force_trial_end
 
                 opts = subscription_options(opts)
                 customer.update_subscription(opts)
